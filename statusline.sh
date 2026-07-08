@@ -21,6 +21,8 @@ $(echo "$input" | jq -r '[
 ] | @tsv')
 EOF
 
+BRANCH=$(git -C "$CWD" branch --show-current 2>/dev/null)
+
 # Shorten home dir to ~
 CWD="${CWD/#$HOME/~}"
 
@@ -58,5 +60,9 @@ SEP="${DIM} | ${RESET}"
 RL5_FMT="$RL5"; [ "$RL5" != "-" ] && RL5_FMT="${RL5}%"
 RL7_FMT="$RL7"; [ "$RL7" != "-" ] && RL7_FMT="${RL7}%"
 
-printf "${CYAN}%s${RESET} ${DIM}(%s)${RESET}${SEP}${BLUE}%s${RESET}${SEP}↑%s ↓%s${SEP}ctx ${CTX_COLOR}%s%%${RESET}${SEP}effort ${MAGENTA}%s${RESET}${SEP}think %s${SEP}5h %s${SEP}7d %s" \
+GREEN='\033[32m'
+BRANCH_SEG=""
+[ -n "$BRANCH" ] && BRANCH_SEG="${SEP}${GREEN} ${BRANCH}${RESET}"
+
+printf "${CYAN}%s${RESET} ${DIM}(%s)${RESET}${SEP}${BLUE}%s${RESET}${BRANCH_SEG}${SEP}↑%s ↓%s${SEP}ctx ${CTX_COLOR}%s%%${RESET}${SEP}effort ${MAGENTA}%s${RESET}${SEP}think %s${SEP}5h %s${SEP}7d %s" \
     "$MODEL_NAME" "$MODEL_ID" "$CWD" "$IN_FMT" "$OUT_FMT" "$CTX_PCT" "$EFFORT" "$THINKING" "$RL5_FMT" "$RL7_FMT"
