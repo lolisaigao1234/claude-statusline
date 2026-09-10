@@ -1,9 +1,9 @@
 #!/bin/bash
 # Claude Code status line — receives session JSON on stdin.
 # Shows: model id + display name, cwd, total in/out tokens, context %,
-# effort level, thinking enabled, 5h rate-limit usage, and the model-scoped
-# weekly limit with its reset time (e.g. "Fable 55% (Sat 05:00)") instead of
-# the all-models weekly limit.
+# effort level, thinking enabled, 5h rate-limit usage with its reset time
+# (e.g. "5h 17% (14:40)"), and the model-scoped weekly limit (e.g. "Fable 56%")
+# instead of the all-models weekly limit.
 # Fields per https://code.claude.com/docs/en/statusline
 # The model-scoped weekly bucket is NOT in the statusline JSON; it comes from
 # GET /api/oauth/usage (limits[].kind == "weekly_scoped"), cached for 60s and
@@ -12,9 +12,20 @@
 
 input=$(cat)
 
-IFS=$'\t' read -r MODEL_ID MODEL_NAME CWD IN_TOK OUT_TOK CTX_PCT EFFORT THINKING RL5 RL7 <<EOF
+IFS=$'\t' read -r MODEL_ID MODEL_NAME CWD IN_TOK OUT_TOK CTX_PCT EFFORT THINKING RL5 RL7 RL5_RESET <<EOF
 $(printf '%s' "$input" | python3 -c '
 import json, sys
+from datetime import datetime, timezone
+
+def fmt_reset(v):
+    """Unix seconds or ISO-8601 -> local "HH:MM" if today, else "Ddd HH:MM"."""
+    try:
+        t = datetime.fromtimestamp(float(v), tz=timezone.utc) if isinstance(v, (int, float)) or str(v).replace(".", "", 1).isdigit() \
+            else datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+        t = t.astimezone()
+        return t.strftime("%H:%M") if t.date() == datetime.now().astimezone().date() else t.strftime("%a %H:%M")
+    except Exception:
+        return "-"
 
 def dig(obj, *path):
     for k in path:
@@ -42,9 +53,11 @@ rl5 = dig(d, "rate_limits", "five_hour", "used_percentage")
 rl5 = "-" if rl5 is None else str(int(rl5))
 rl7 = dig(d, "rate_limits", "seven_day", "used_percentage")
 rl7 = "-" if rl7 is None else str(int(rl7))
+rl5_reset = dig(d, "rate_limits", "five_hour", "resets_at")
+rl5_reset = "-" if rl5_reset is None else fmt_reset(rl5_reset)
 
 print("\t".join([str(model_id), str(model_name), str(cwd), str(int(in_tok)), str(int(out_tok)),
-                  str(ctx_pct), str(effort), thinking, rl5, rl7]))
+                  str(ctx_pct), str(effort), thinking, rl5, rl7, rl5_reset]))
 ')
 EOF
 
@@ -69,34 +82,35 @@ if (( $(date +%s) - cache_mtime > CACHE_TTL )); then
     ' >/dev/null 2>&1 </dev/null &
 fi
 
-# Emits: label, used %, reset time in local tz ("HH:MM" if today, else "Ddd HH:MM").
-IFS=$'\t' read -r SCOPED_LABEL SCOPED_PCT SCOPED_RESET <<EOF
+# Emits: scoped label, scoped used %, and the 5h session reset (local tz) as a
+# fallback for when the statusline JSON lacks rate_limits.five_hour.resets_at.
+IFS=$'\t' read -r SCOPED_LABEL SCOPED_PCT CACHE_RL5_RESET <<EOF
 $(python3 - "$USAGE_CACHE" <<'PY'
 import json, sys
 from datetime import datetime
+label, pct, reset = "-", "-", "-"
 try:
     d = json.load(open(sys.argv[1]))
     for l in d.get("limits") or []:
         m = (l.get("scope") or {}).get("model") or {}
         if l.get("kind") == "weekly_scoped" and m.get("display_name"):
-            reset = "-"
-            if l.get("resets_at"):
-                t = datetime.fromisoformat(l["resets_at"]).astimezone()
-                reset = t.strftime("%H:%M") if t.date() == datetime.now().astimezone().date() else t.strftime("%a %H:%M")
-            print(f"{m['display_name']}\t{int(l.get('percent') or 0)}\t{reset}")
-            sys.exit()
+            label, pct = m["display_name"], str(int(l.get("percent") or 0))
+        elif l.get("kind") == "session" and l.get("resets_at"):
+            t = datetime.fromisoformat(l["resets_at"]).astimezone()
+            reset = t.strftime("%H:%M") if t.date() == datetime.now().astimezone().date() else t.strftime("%a %H:%M")
 except Exception:
     pass
-print("-\t-\t-")
+print(f"{label}\t{pct}\t{reset}")
 PY
 )
 EOF
 # Fall back to the all-models weekly figure if the scoped bucket is unavailable.
 if [ "$SCOPED_LABEL" = "-" ]; then
-    WEEK_LABEL="7d"; WEEK_PCT="$RL7"; WEEK_RESET="-"
+    WEEK_LABEL="7d"; WEEK_PCT="$RL7"
 else
-    WEEK_LABEL="$SCOPED_LABEL"; WEEK_PCT="$SCOPED_PCT"; WEEK_RESET="$SCOPED_RESET"
+    WEEK_LABEL="$SCOPED_LABEL"; WEEK_PCT="$SCOPED_PCT"
 fi
+[ "$RL5_RESET" = "-" ] && RL5_RESET="$CACHE_RL5_RESET"
 
 # Shorten home dir to ~
 CWD="${CWD/#$HOME/~}"
@@ -133,8 +147,8 @@ RESET='\033[0m'
 SEP="${DIM} | ${RESET}"
 
 RL5_FMT="$RL5"; [ "$RL5" != "-" ] && RL5_FMT="${RL5}%"
+[ "$RL5_RESET" != "-" ] && printf -v RL5_FMT "%s ${DIM}(%s)${RESET}" "$RL5_FMT" "$RL5_RESET"
 WEEK_FMT="$WEEK_PCT"; [ "$WEEK_PCT" != "-" ] && WEEK_FMT="${WEEK_PCT}%"
-[ "$WEEK_RESET" != "-" ] && printf -v WEEK_FMT "%s ${DIM}(%s)${RESET}" "$WEEK_FMT" "$WEEK_RESET"
 
 GREEN='\033[32m'
 BRANCH_SEG=""

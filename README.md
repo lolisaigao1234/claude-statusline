@@ -4,11 +4,11 @@ Custom [status line](https://code.claude.com/docs/en/statusline) for Claude Code
 
 Displays: model display name + id, current directory, git branch, total
 input/output tokens, context window used % (color-coded), effort level,
-thinking on/off, 5-hour rate-limit usage, and the **model-scoped weekly limit**
-(e.g. Fable) with its reset time instead of the all-models weekly limit.
+thinking on/off, 5-hour rate-limit usage **with its reset time**, and the
+**model-scoped weekly limit** (e.g. Fable) instead of the all-models weekly limit.
 
 ```
-Fable (claude-fable-5-1) | ~/Documents/Github/akam-proxy |  main | ↑45.2k ↓3.1k | ctx 22% | effort high | think on | 5h 17% | Fable 56% (Sat 05:00)
+Fable (claude-fable-5-1) | ~/Documents/Github/akam-proxy |  main | ↑45.2k ↓3.1k | ctx 22% | effort high | think on | 5h 17% (14:40) | Fable 56%
 ```
 
 ## Model-scoped weekly limit
@@ -22,10 +22,17 @@ from `GET https://api.anthropic.com/api/oauth/usage` (`limits[]` entry with
 - fetches the endpoint at most once per 60 s, in a detached background process,
   so the status line never blocks on the network (warm run ≈ 35 ms),
 - caches the response at `${XDG_CACHE_HOME:-~/.cache}/claude-statusline-usage.json`,
-- shows the server-supplied label and reset time in local time (`HH:MM` if
-  today, else `Ddd HH:MM`),
+- shows the server-supplied label for the scoped bucket,
 - falls back to the all-models `7d NN%` figure if the cache is empty, the
   token is missing, or the fetch fails.
+
+## 5-hour session reset
+
+The reset time next to `5h` comes from `rate_limits.five_hour.resets_at` in the
+status-line JSON (Unix seconds or ISO-8601 both handled), rendered in local
+time as `HH:MM` if today, else `Ddd HH:MM`. If that field is absent, the
+`session` entry from the cached usage response is used instead. The weekly
+reset is fixed and therefore not shown.
 
 ## Install
 
